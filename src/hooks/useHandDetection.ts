@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   DrawingUtils,
   FilesetResolver,
@@ -10,8 +10,13 @@ import { getFingerStates } from '../utils/countRaisedFingers'
 import {
   DEFAULT_GESTURE_ACTION,
   type GestureAction,
-  recognizeGesture,
+  getGesturePattern,
+  recognizeGestureFromPattern,
 } from '../utils/recognizeGesture'
+import {
+  GestureStateMachine,
+  type RawHandInput,
+} from '../utils/gestureStateMachine'
 
 const WASM_URL =
   'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm'
@@ -24,17 +29,27 @@ type UseHandDetectionOptions = {
   canvasRef: React.RefObject<HTMLCanvasElement | null>
 }
 
+export type HandCount = {
+  handedness: string
+  count: number
+  gesture: GestureAction
+  isHandednessStable: boolean
+  gestureConfidence: number
+  justCommitted: boolean
+}
+
 type DetectionState = {
   error: string | null
   fingerCount: number | null
   activeGesture: GestureAction | null
-  handCounts: Array<{ handedness: string; count: number; gesture: GestureAction }>
+  handCounts: HandCount[]
   drawingTool: {
     mode: 'draw' | 'erase'
     x: number
     y: number
   } | null
   statusMessage: string
+  gestureConfidence: number
 }
 
 function isPointerPose(fingerStates: ReturnType<typeof getFingerStates>) {
@@ -124,9 +139,7 @@ function useHandDetection({
   canvasRef,
 }: UseHandDetectionOptions): DetectionState {
   const [fingerCount, setFingerCount] = useState<number | null>(null)
-  const [handCounts, setHandCounts] = useState<
-    Array<{ handedness: string; count: number; gesture: GestureAction }>
-  >([])
+  const [handCounts, setHandCounts] = useState<HandCount[]>([])
   const [activeGesture, setActiveGesture] = useState<GestureAction | null>(null)
   const [drawingTool, setDrawingTool] = useState<{
     mode: 'draw' | 'erase'
@@ -137,6 +150,9 @@ function useHandDetection({
   const [statusMessage, setStatusMessage] = useState(
     'Waiting for the camera feed...',
   )
+  const [gestureConfidence, setGestureConfidence] = useState(0)
+
+  const stateMachineRef = useRef(new GestureStateMachine())
 
   useEffect(() => {
     if (!enabled) {
@@ -215,19 +231,42 @@ function useHandDetection({
             setHandCounts([])
             setActiveGesture(null)
             setDrawingTool(null)
+            setGestureConfidence(0)
             setStatusMessage('The model is warming up. Keep your hand in view.')
             frameId = requestAnimationFrame(processFrame)
             return
           }
 
+          // Compute per-hand finger states once — reused for state machine and drawing tool
+          const perHand = result.landmarks.map((landmarks, index) => {
+            const rawHandedness =
+              result.handedness[index]?.[0]?.categoryName ?? `Hand ${index + 1}`
+            const fingerStates = getFingerStates(landmarks, rawHandedness)
+            return { landmarks, index, rawHandedness, fingerStates }
+          })
+
+          const rawInputs: RawHandInput[] = perHand.map(
+            ({ index, rawHandedness, fingerStates }) => ({
+              index,
+              pattern: getGesturePattern(fingerStates),
+              rawHandedness,
+            }),
+          )
+
+          const { stabilized, overallConfidence } =
+            stateMachineRef.current.process(rawInputs)
+
+          // Drawing tool uses RAW finger states — bypass debounce for frame accuracy
           let nextDrawingTool: DetectionState['drawingTool'] = null
 
-          const nextHandCounts = result.landmarks
-            .map((landmarks, index) => {
-              const handednessLabel =
-                result.handedness[index]?.[0]?.categoryName ?? `Hand ${index + 1}`
-              const fingerStates = getFingerStates(landmarks, handednessLabel)
-              const gesture = recognizeGesture(fingerStates)
+          const nextHandCounts: HandCount[] = perHand
+            .map(({ landmarks, index, rawHandedness, fingerStates }) => {
+              const stab = stabilized.find((s) => s.index === index)
+              const confirmedHandedness =
+                stab?.confirmedHandedness ?? rawHandedness
+              const gesture = recognizeGestureFromPattern(
+                stab?.pattern ?? getGesturePattern(fingerStates),
+              )
 
               if (!nextDrawingTool && isPointerPose(fingerStates)) {
                 const indexTip = landmarks[8]
@@ -238,7 +277,7 @@ function useHandDetection({
                 }
               } else if (
                 !nextDrawingTool &&
-                handednessLabel === 'Left' &&
+                confirmedHandedness === 'Left' &&
                 isOpenPalmPose(fingerStates)
               ) {
                 const anchor = landmarks[5]
@@ -250,9 +289,12 @@ function useHandDetection({
               }
 
               return {
-                handedness: handednessLabel,
+                handedness: confirmedHandedness,
                 count: Object.values(fingerStates).filter(Boolean).length,
                 gesture,
+                isHandednessStable: stab?.isHandednessStable ?? false,
+                gestureConfidence: stab?.gestureConfidence ?? 0,
+                justCommitted: stab?.justCommitted ?? false,
               }
             })
             .sort((a, b) => a.handedness.localeCompare(b.handedness))
@@ -263,9 +305,11 @@ function useHandDetection({
 
           setFingerCount(count)
           setHandCounts(nextHandCounts)
+          setGestureConfidence(overallConfidence)
           setActiveGesture(
-            nextHandCounts.find((hand) => hand.gesture.id !== DEFAULT_GESTURE_ACTION.id)
-              ?.gesture ?? null,
+            nextHandCounts.find(
+              (hand) => hand.gesture.id !== DEFAULT_GESTURE_ACTION.id,
+            )?.gesture ?? null,
           )
           setDrawingTool(nextDrawingTool)
           setStatusMessage(getStatusMessage(result, count))
@@ -292,6 +336,7 @@ function useHandDetection({
       active = false
       cancelAnimationFrame(frameId)
       handLandmarker?.close()
+      stateMachineRef.current.reset()
     }
   }, [canvasRef, enabled, videoRef])
 
@@ -302,6 +347,7 @@ function useHandDetection({
     handCounts,
     drawingTool,
     statusMessage,
+    gestureConfidence,
   }
 }
 
