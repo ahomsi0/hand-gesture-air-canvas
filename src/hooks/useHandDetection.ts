@@ -66,9 +66,6 @@ function isOpenPalmPose(fingerStates: ReturnType<typeof getFingerStates>) {
   return Object.values(fingerStates).every(Boolean)
 }
 
-function isFistPose(fingerStates: ReturnType<typeof getFingerStates>) {
-  return Object.values(fingerStates).every(v => !v)
-}
 
 function drawResults(canvas: HTMLCanvasElement, hands: NormalizedLandmark[][]) {
   const ctx = canvas.getContext('2d')
@@ -222,16 +219,19 @@ function useHandDetection({ enabled, videoRef, canvasRef }: UseHandDetectionOpti
             .sort((a, b) => a.handedness.localeCompare(b.handedness))
 
           // EMA smoothing on drawing coordinates only
-          if (nextDrawingTool) {
+          type DrawTool = { mode: 'draw' | 'erase'; x: number; y: number }
+          const rawTool = nextDrawingTool as DrawTool | null
+          if (rawTool !== null) {
             const prev = smoothedDrawRef.current
-            if (prev && prev.mode === nextDrawingTool.mode) {
-              nextDrawingTool = {
-                ...nextDrawingTool,
-                x: DRAW_ALPHA * nextDrawingTool.x + (1 - DRAW_ALPHA) * prev.x,
-                y: DRAW_ALPHA * nextDrawingTool.y + (1 - DRAW_ALPHA) * prev.y,
-              }
-            }
-            smoothedDrawRef.current = { ...nextDrawingTool }
+            const smoothed: DrawTool = (prev && prev.mode === rawTool.mode)
+              ? {
+                  mode: rawTool.mode,
+                  x: DRAW_ALPHA * rawTool.x + (1 - DRAW_ALPHA) * prev.x,
+                  y: DRAW_ALPHA * rawTool.y + (1 - DRAW_ALPHA) * prev.y,
+                }
+              : rawTool
+            nextDrawingTool = smoothed
+            smoothedDrawRef.current = smoothed
           } else {
             smoothedDrawRef.current = null
           }

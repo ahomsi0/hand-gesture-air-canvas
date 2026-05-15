@@ -68,7 +68,7 @@ function CameraView() {
   const fingerSwipeCooldownRef = useRef(0)
 
   const [cameraError, setCameraError] = useState<string | null>(null)
-  const [selectedBrush, setSelectedBrush] = useState(PALETTE_COLORS[3]) // Gold default
+  const [selectedBrush, setSelectedBrush] = useState<typeof PALETTE_COLORS[number]>(PALETTE_COLORS[3])
   const [brushSize, setBrushSize] = useState(3)
   const [strokeCount, setStrokeCount] = useState(0)
   const [streamReady, setStreamReady] = useState(false)
