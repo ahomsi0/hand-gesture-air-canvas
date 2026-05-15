@@ -407,6 +407,31 @@
 .hand-pose  { color: rgba(15, 79, 73, 0.5); font-size: 0.68rem; }
 .hand-count { font-size: 1.1rem; line-height: 1; color: #0f4f49; font-weight: 700; }
 
+/* ── Mobile info strip (hidden on desktop) ── */
+.mobile-strip {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-top: 1px solid rgba(15, 79, 73, 0.2);
+  background: #ffffff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #0f4f49;
+  flex-shrink: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.mobile-strip .brush-swatch {
+  width: 14px;
+  height: 14px;
+  border: 1px solid #0f4f49;
+  flex-shrink: 0;
+}
+
+.mobile-strip-sep { opacity: 0.3; }
+
 /* ── Responsive ── */
 @media (max-width: 960px) {
   .workspace { grid-template-columns: 1fr; height: auto; }
@@ -417,8 +442,27 @@
 }
 
 @media (max-width: 640px) {
-  .app-shell { padding: 5px 6px; }
-  .topbar { flex-direction: column; align-items: stretch; }
-  .canvas-toolbar { flex-direction: column; align-items: stretch; }
+  .app-shell { padding: 4px 5px; gap: 5px; }
+  .topbar { padding: 7px 10px; }
+  .topbar h1 { font-size: 1.3rem; }
   .topbar-hints { justify-content: center; }
+
+  /* Maximize video, hide sidebar */
+  .workspace { grid-template-columns: 1fr; height: 100%; gap: 0; }
+  .canvas-panel { height: 100%; }
+  .canvas-toolbar { padding: 4px 6px; margin-bottom: 4px; flex-wrap: wrap; gap: 6px; }
+  .video-stage { height: auto !important; flex: 1; }
+  .sidebar { display: none; }
+
+  /* Show mobile strip */
+  .mobile-strip { display: flex; }
+
+  /* Touch-friendly tap targets */
+  .secondary-button { min-height: 44px; padding: 10px 14px; font-size: 0.82rem; }
+  .primary-button   { min-height: 44px; }
+
+  /* Larger palette swatches for touch */
+  .palette-swatch { width: 38px; height: 38px; }
+
+  .help-grid { grid-template-columns: 1fr; }
 }

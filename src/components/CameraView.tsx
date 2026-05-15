@@ -376,6 +376,17 @@ function CameraView() {
               : statusMessage}
           </div>
         </div>
+
+        <div className="mobile-strip">
+          <span className="brush-swatch" style={{ backgroundColor: selectedBrush.value }} />
+          <span>{selectedBrush.label}</span>
+          <span className="mobile-strip-sep">·</span>
+          <span>sz {brushSize}/5</span>
+          <span className="mobile-strip-sep">·</span>
+          <span>{detection.fingerCount !== null ? `${detection.fingerCount} fingers` : 'no hand'}</span>
+          <span className="mobile-strip-sep">·</span>
+          <span>{detection.activeGesture?.label ?? 'waiting'}</span>
+        </div>
       </section>
 
       <aside className="sidebar">
