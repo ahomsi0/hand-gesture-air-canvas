@@ -17,6 +17,7 @@ export type SceneToggleState = {
   people: boolean
   smile: boolean
   gender: boolean
+  beauty: boolean
 }
 
 export type SceneInsights = {
@@ -25,6 +26,7 @@ export type SceneInsights = {
   peopleCount: number | null
   smileDetected: boolean | null
   gender: 'Male' | 'Female' | null
+  beautyScore: number | null
   status: string
 }
 
@@ -83,29 +85,98 @@ function getBlinkSignal(categories: Category[] | undefined) {
 }
 
 // Estimates perceived gender from face landmark geometry.
-// Uses jaw-to-face width ratio and face proportions as rough heuristics.
-// Not accurate — for entertainment/demo purposes only.
+// Uses multiple facial proportions as heuristics — not a real classifier.
+// For entertainment/demo purposes only.
 function estimateGender(landmarks: NormalizedLandmark[]): 'Male' | 'Female' | null {
+  if (landmarks.length < 468) return null
+
+  // Core measurements
+  const faceWidth  = Math.abs(landmarks[454].x - landmarks[234].x) // cheekbone span
+  const faceHeight = Math.abs(landmarks[152].y - landmarks[10].y)  // chin to crown
+  if (faceWidth < 0.01 || faceHeight < 0.01) return null
+
+  // Jaw width — lower jaw corners (more squared = masculine)
+  const jawWidth = Math.abs(landmarks[397].x - landmarks[172].x)
+
+  // Nose width — alar base (wider = masculine)
+  const noseWidth = Math.abs(landmarks[358].x - landmarks[129].x)
+
+  // Chin width — narrow tapered chin = feminine, wide flat chin = masculine
+  const chinWidth = Math.abs(landmarks[394].x - landmarks[169].x)
+
+  // Brow-to-eye distance — closer brow ridge = masculine
+  const leftBrowY  = (landmarks[70].y  + landmarks[63].y)  / 2   // left brow mid
+  const leftEyeY   = (landmarks[159].y + landmarks[145].y) / 2   // left eye mid
+  const rightBrowY = (landmarks[300].y + landmarks[293].y) / 2
+  const rightEyeY  = (landmarks[386].y + landmarks[374].y) / 2
+  const browEyeGap = ((Math.abs(leftEyeY - leftBrowY) + Math.abs(rightEyeY - rightBrowY)) / 2) / faceHeight
+
+  // Derived ratios
+  const jawRatio   = jawWidth  / faceWidth   // higher → masculine
+  const noseRatio  = noseWidth / faceWidth   // higher → masculine
+  const chinRatio  = chinWidth / faceWidth   // higher → masculine
+  const aspect     = faceHeight / faceWidth  // higher → feminine (taller/narrower face)
+
+  // Weighted score — positive = masculine, negative = feminine
+  // Thresholds tuned to average population midpoints
+  let score = 0
+  score += (jawRatio  - 0.68) * 14   // jaw squareness is the strongest signal
+  score += (noseRatio - 0.22) * 10   // nose breadth
+  score += (chinRatio - 0.38) * 8    // chin breadth
+  score -= (aspect    - 1.45) * 6    // face height/width (oval = feminine)
+  score -= (browEyeGap - 0.085) * 12 // small brow-eye gap = masculine brow ridge
+
+  return score > 0 ? 'Male' : 'Female'
+}
+
+// Estimates a beauty score 1–10 using facial symmetry and golden-ratio proportions.
+// Heuristic only — for entertainment/demo purposes.
+function estimateBeauty(landmarks: NormalizedLandmark[]): number | null {
   if (landmarks.length < 468) return null
 
   const faceWidth = Math.abs(landmarks[454].x - landmarks[234].x)
   const faceHeight = Math.abs(landmarks[152].y - landmarks[10].y)
-  const jawWidth = Math.abs(landmarks[397].x - landmarks[172].x)
-  const lowerFace = Math.abs(landmarks[152].y - landmarks[4].y)
-
   if (faceWidth < 0.01 || faceHeight < 0.01) return null
 
-  const jawToFaceRatio = jawWidth / faceWidth
-  const aspectRatio = faceHeight / faceWidth
-  const lowerFaceRatio = lowerFace / faceHeight
+  const faceCenterX = (landmarks[454].x + landmarks[234].x) / 2
 
-  // Positive = male leaning, negative = female leaning
-  let score = 0
-  score += (jawToFaceRatio - 0.70) * 12
-  score += (lowerFaceRatio - 0.36) * 8
-  score -= (aspectRatio - 1.25) * 3
+  // Eye geometry
+  const reOuterX = landmarks[33].x
+  const reInnerX = landmarks[133].x
+  const leInnerX = landmarks[362].x
+  const leOuterX = landmarks[263].x
+  const rightEyeWidth = Math.abs(reOuterX - reInnerX)
+  const leftEyeWidth = Math.abs(leOuterX - leInnerX)
+  const rightEyeCenterX = (reOuterX + reInnerX) / 2
+  const leftEyeCenterX = (leOuterX + leInnerX) / 2
 
-  return score > 0 ? 'Male' : 'Female'
+  // Symmetry scores
+  const eyeWidthSym = 1 - Math.abs(rightEyeWidth - leftEyeWidth) / (Math.max(rightEyeWidth, leftEyeWidth, 0.001))
+  const rightFromCenter = Math.abs(rightEyeCenterX - faceCenterX)
+  const leftFromCenter = Math.abs(leftEyeCenterX - faceCenterX)
+  const eyePosSym = 1 - Math.abs(rightFromCenter - leftFromCenter) / faceWidth
+  const mouthLeftX = landmarks[61].x
+  const mouthRightX = landmarks[291].x
+  const mouthSym = 1 - Math.abs(Math.abs(mouthLeftX - faceCenterX) - Math.abs(mouthRightX - faceCenterX)) / faceWidth
+  const symmetryScore = eyeWidthSym * 0.4 + eyePosSym * 0.4 + mouthSym * 0.2
+
+  // Proportion scores (golden ratio targets)
+  const aspectScore = 1 - Math.min(Math.abs(faceHeight / faceWidth - 1.618) / 1.0, 1)
+  const totalEyeWidth = rightEyeWidth + leftEyeWidth
+  const eyeRatioScore = 1 - Math.min(Math.abs(totalEyeWidth / faceWidth - 0.38) / 0.2, 1)
+  const ipd = Math.abs(rightEyeCenterX - leftEyeCenterX)
+  const ipdScore = 1 - Math.min(Math.abs(ipd / faceWidth - 0.46) / 0.2, 1)
+  const mouthWidth = Math.abs(mouthRightX - mouthLeftX)
+  const mouthRatioScore = 1 - Math.min(Math.abs(mouthWidth / faceWidth - 0.44) / 0.2, 1)
+
+  // Eye openness (larger = more prominent)
+  const rightEyeH = Math.abs(landmarks[159].y - landmarks[145].y)
+  const leftEyeH = Math.abs(landmarks[386].y - landmarks[374].y)
+  const eyeOpenScore = Math.min(((rightEyeH + leftEyeH) / 2) / faceHeight / 0.04, 1)
+
+  const proportionScore = aspectScore * 0.25 + eyeRatioScore * 0.2 + ipdScore * 0.2 + eyeOpenScore * 0.2 + mouthRatioScore * 0.15
+  const raw = symmetryScore * 0.5 + proportionScore * 0.5
+  return Math.round((1 + raw * 9) * 10) / 10
 }
 
 function getStatusMessage(
@@ -119,7 +190,8 @@ function getStatusMessage(
     toggles.eyeDirection ||
     toggles.smile ||
     toggles.blinkCounter ||
-    toggles.gender
+    toggles.gender ||
+    toggles.beauty
 
   if (!anyOn) return 'Extra scene analysis is turned off.'
   if (toggles.people && peopleCount === null) return 'Scanning the frame for faces and people.'
@@ -138,6 +210,7 @@ function useSceneInsights({
   const [eyeDirection, setEyeDirection] = useState<string | null>(null)
   const [smileDetected, setSmileDetected] = useState<boolean | null>(null)
   const [gender, setGender] = useState<'Male' | 'Female' | null>(null)
+  const [beautyScore, setBeautyScore] = useState<number | null>(null)
   const [status, setStatus] = useState('Extra scene analysis is turned off.')
 
   useEffect(() => {
@@ -146,7 +219,8 @@ function useSceneInsights({
       toggles.eyeDirection ||
       toggles.smile ||
       toggles.blinkCounter ||
-      toggles.gender
+      toggles.gender ||
+      toggles.beauty
 
     if (!enabled || !anyOn) {
       const frameId = window.requestAnimationFrame(() => {
@@ -155,6 +229,7 @@ function useSceneInsights({
         setEyeDirection(null)
         setSmileDetected(null)
         setGender(null)
+        setBeautyScore(null)
         setStatus('Extra scene analysis is turned off.')
       })
       return () => window.cancelAnimationFrame(frameId)
@@ -164,6 +239,11 @@ function useSceneInsights({
     let frameId = 0
     let lastVideoTime = -1
     let blinkArmed = true
+    let smoothedBeauty: number | null = null
+    // Gender hysteresis: only commit after GENDER_LOCK consecutive matching frames
+    const GENDER_LOCK = 50
+    let genderCandidate: { label: 'Male' | 'Female' | null; frames: number } = { label: null, frames: 0 }
+    let lockedGender: 'Male' | 'Female' | null = null
     let faceLandmarker: FaceLandmarker | null = null
 
     const runAnalysis = async () => {
@@ -209,10 +289,31 @@ function useSceneInsights({
               : null
           const nextSmileDetected =
             toggles.smile && detectedFaces ? isSmiling(primaryBlendshapes) : null
-          const nextGender =
-            toggles.gender && detectedFaces && primaryLandmarks
-              ? estimateGender(primaryLandmarks)
-              : null
+          let nextGender: 'Male' | 'Female' | null = null
+          if (toggles.gender && detectedFaces && primaryLandmarks) {
+            const raw = estimateGender(primaryLandmarks)
+            if (raw === genderCandidate.label) {
+              genderCandidate.frames++
+              if (genderCandidate.frames >= GENDER_LOCK) lockedGender = raw
+            } else {
+              genderCandidate = { label: raw, frames: 1 }
+            }
+            nextGender = lockedGender
+          } else {
+            genderCandidate = { label: null, frames: 0 }
+            lockedGender = null
+          }
+
+          let nextBeauty: number | null = null
+          if (toggles.beauty && detectedFaces && primaryLandmarks) {
+            const raw = estimateBeauty(primaryLandmarks)
+            if (raw !== null) {
+              smoothedBeauty = smoothedBeauty === null ? raw : 0.08 * raw + 0.92 * smoothedBeauty
+              nextBeauty = Math.round(smoothedBeauty * 10) / 10
+            }
+          } else {
+            smoothedBeauty = null
+          }
 
           if (toggles.blinkCounter && detectedFaces) {
             const blinkSignal = getBlinkSignal(primaryBlendshapes)
@@ -230,6 +331,7 @@ function useSceneInsights({
           setEyeDirection(nextEyeDirection)
           setSmileDetected(nextSmileDetected)
           setGender(nextGender)
+          setBeautyScore(nextBeauty)
           setStatus(
             getStatusMessage(toggles, nextPeopleCount, nextEyeDirection, nextSmileDetected),
           )
@@ -245,6 +347,7 @@ function useSceneInsights({
         setEyeDirection(null)
         setSmileDetected(null)
         setGender(null)
+        setBeautyScore(null)
         setStatus('Scene analysis could not be started in this browser session.')
       }
     }
@@ -258,7 +361,7 @@ function useSceneInsights({
     }
   }, [enabled, toggles, videoRef])
 
-  return { blinkCount, eyeDirection, peopleCount, smileDetected, gender, status }
+  return { blinkCount, eyeDirection, peopleCount, smileDetected, gender, beautyScore, status }
 }
 
 export default useSceneInsights
